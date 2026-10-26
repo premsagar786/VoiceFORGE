@@ -1,0 +1,208 @@
+// VoiceForge data model (PRD Section 8 reconstructed from the build prompt).
+// Postgres + pgvector: embeddings live in KnowledgeChunk.embedding.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  users            User[]
+  agents           Agent[]
+  oauthConnections OAuthConnection[]
+  usageMonths      UsageMonth[]
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String?
+  role         String    @default("owner")
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id])
+  createdAt    DateTime  @default(now())
+}
+
+model Agent {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id])
+  name              String
+  description       String?   @db.Text
+  status            String    @default("draft") // draft | live | paused
+  elevenlabsAgentId String?
+
+  currentVersionId String?  @unique
+  currentVersion   AgentVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+  versions         AgentVersion[] @relation("Versions")
+
+  knowledgeDocs KnowledgeDoc[]
+  conversations Conversation[]
+  deployments   Deployment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+model AgentVersion {
+  id              String   @id @default(cuid())
+  agentId         String
+  agent           Agent    @relation("Versions", fields: [agentId], references: [id], onDelete: Cascade)
+  currentForAgent Agent?   @relation("CurrentVersion")
+  version         Int
+  config        Json // matches @voiceforge/shared AgentConfigSchema
+  changeSummary String?
+  createdAt     DateTime @default(now())
+
+  deployments Deployment[]
+
+  @@unique([agentId, version])
+}
+
+model KnowledgeDoc {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  filename  String
+  mimeType  String
+  sizeBytes Int
+  status    String   @default("processing") // processing | ready | failed
+  error     String?  @db.Text
+
+  chunks KnowledgeChunk[]
+
+  createdAt DateTime @default(now())
+
+  @@index([agentId])
+}
+
+model KnowledgeChunk {
+  id         String       @id @default(cuid())
+  docId      String
+  doc        KnowledgeDoc @relation(fields: [docId], references: [id], onDelete: Cascade)
+  agentId    String // denormalized for similarity search
+  content    String       @db.Text
+  chunkIndex Int
+  // pgvector column; Prisma Unsupported fields are written/read via raw SQL.
+  embedding  Unsupported("vector(1536)")?
+
+  createdAt DateTime @default(now())
+
+  @@index([agentId])
+}
+
+model Conversation {
+  id                       String    @id @default(cuid())
+  agentId                  String
+  agent                    Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  workspaceId              String // denormalized for scoped analytics queries
+  elevenlabsConversationId String?   @unique
+  channel                  String    @default("web") // web | widget | phone
+  language                 String?
+  startedAt                DateTime  @default(now())
+  endedAt                  DateTime?
+  durationSeconds          Int?
+  outcome                  String? // booked | answered | transferred | unresolved | abandoned
+  summary                  String?   @db.Text
+  flags                    String[]  @default([])
+
+  turns           ConversationTurn[]
+  toolInvocations ToolInvocation[]
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, startedAt])
+  @@index([agentId, startedAt])
+}
+
+model ConversationTurn {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // user | agent
+  text           String       @db.Text
+  atMs           Int? // offset from call start, milliseconds
+  latencyMs      Int?
+  language       String?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+}
+
+enum ToolInvocationStatus {
+  ok
+  error
+  timeout
+}
+
+model ToolInvocation {
+  id             String               @id @default(cuid())
+  conversationId String?
+  conversation   Conversation?        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agentId        String
+  toolName       String
+  input          Json?
+  output         Json?
+  status         ToolInvocationStatus @default(ok)
+  error          String?              @db.Text
+  durationMs     Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([agentId])
+}
+
+model Deployment {
+  id             String       @id @default(cuid())
+  agentId        String
+  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  versionId      String
+  version        AgentVersion @relation(fields: [versionId], references: [id])
+  slug           String       @unique
+  status         String       @default("active") // active | paused
+  allowedDomains String[]     @default([])
+
+  createdAt DateTime @default(now())
+}
+
+model OAuthConnection {
+  id                    String    @id @default(cuid())
+  workspaceId           String
+  workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  provider              String // google_calendar
+  connectedEmail        String?
+  encryptedRefreshToken String // AES-256-GCM, keyed by ENCRYPTION_KEY
+  scopes                String[]  @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, provider])
+}
+
+model UsageMonth {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  month            String // YYYY-MM
+  llmTokens        Int       @default(0)
+  voiceSeconds     Int       @default(0)
+  estimatedCostInr Float     @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, month])
+}

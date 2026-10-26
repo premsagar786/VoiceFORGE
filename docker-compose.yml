@@ -1,0 +1,20 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: voiceforge-db
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: voiceforge
+      POSTGRES_PASSWORD: voiceforge
+      POSTGRES_DB: voiceforge
+    volumes:
+      - voiceforge_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voiceforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  voiceforge_pgdata:

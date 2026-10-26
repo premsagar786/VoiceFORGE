@@ -1,0 +1,32 @@
+{
+  "name": "voiceforge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "VoiceForge - no-code voice AI agent builder (hackathon MVP)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"pnpm --filter @voiceforge/api dev\" \"pnpm --filter @voiceforge/web dev\"",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @voiceforge/api db:migrate",
+    "db:seed": "pnpm --filter @voiceforge/api db:seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "prisma",
+      "@prisma/client",
+      "@prisma/engines",
+      "@tailwindcss/oxide",
+      "sharp"
+    ]
+  }
+}
